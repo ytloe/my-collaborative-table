@@ -1,4 +1,4 @@
-// script.js (v12 - Single Client Instance Fix)
+// script.js (v13 - The Definitive Debug & Fix Version)
 
 // 模块导入
 import { hash, compare } from "https://esm.sh/bcrypt-ts@5.0.2";
@@ -20,8 +20,9 @@ const SUPABASE_URL = "https://uccwwlrxufwzljhxyiyu.supabase.co"; // 你的 URL
 const SUPABASE_ANON_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVjY3d3bHJ4dWZ3emxqaHh5aXl1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI3MTcxMzgsImV4cCI6MjA2ODI5MzEzOH0.aNFS1Q1kxLo_BEJzlDjLQy2uQrK1K9AOPqbMDlvrTBA"; // 你的 Anon Key
 
-// 【关键修复】只声明一次，但用 let 允许重新赋值
-let supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+// 【关键修复】只创建一次客户端，并用 const 保护它，防止被意外重新创建
+const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+console.log("[DEBUG] Initial Supabase client created.");
 
 // --- 应用状态变量 ---
 let currentUser = null;
@@ -30,29 +31,27 @@ let isAdmin = false;
 let tableData = [];
 const tableHeaders = ["选手", "成绩", "视频", "最近更改时间", "操作"];
 
-// 【关键修复】一个函数，用于根据登录状态重新配置唯一的客户端实例
-function setupSupabaseClient(username) {
+// 【关键修复】一个新的函数，用于修改现有客户端实例的默认请求头
+function setAuthHeaders(username) {
   if (username && username !== "访客" && hasEditPermission) {
     const encodedUsername = encodeURIComponent(username);
-    supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      global: {
-        headers: { "x-username": encodedUsername },
-      },
-    });
-    console.log(`Supabase client reconfigured for user: ${username}`);
+    // 这是修改现有实例请求头的正确方法，直接操作 rest.headers
+    supabaseClient.rest.headers["x-username"] = encodedUsername;
+    console.log(`[DEBUG] Auth headers SET for user: '${username}' (encoded: '${encodedUsername}')`);
   } else {
-    // 访客或只读用户，使用无特殊请求头的默认客户端
-    supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-    console.log("Supabase client set to default for visitor/read-only mode.");
+    // 清除自定义请求头，恢复默认状态
+    delete supabaseClient.rest.headers["x-username"];
+    console.log(`[DEBUG] Auth headers CLEARED.`);
   }
 }
 
 // --- 登录/注册处理 ---
 async function handleLogin(username, password) {
+  console.log(`[DEBUG] handleLogin started for user: '${username}'`);
   currentUser = username;
 
-  // 如果没有密码，则为访客
   if (!password) {
+    console.log("[DEBUG] No password provided. Logging in as '访客'.");
     hasEditPermission = false;
     isAdmin = false;
     sessionStorage.setItem("sessionData", JSON.stringify({ username: "访客", hasEditPermission: false }));
@@ -61,42 +60,52 @@ async function handleLogin(username, password) {
   }
 
   try {
-    // 使用默认客户端进行初始查询，因为它不需要特殊头
-    const { data: profile, error: selectError } = await window.supabase
-      .createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+    console.log("[DEBUG] Querying profile for user:", username);
+    // 此查询使用全局客户端的当前状态（此时应为默认状态）
+    const { data: profile, error: selectError } = await supabaseClient
       .from("profiles")
       .select("encrypted_password")
       .eq("username", username)
       .single();
 
     if (selectError && selectError.code !== "PGRST116") {
+      console.error("[DEBUG] Error fetching profile:", selectError);
       throw new Error(`查询用户信息时出错: ${selectError.message}`);
     }
+    console.log("[DEBUG] Profile query result:", profile);
 
     if (profile) {
-      // 用户存在，验证密码
+      console.log("[DEBUG] Profile found. Comparing password.");
       const passwordMatch = await compare(password, profile.encrypted_password);
       hasEditPermission = passwordMatch;
+      console.log(`[DEBUG] Password match result: ${passwordMatch}`);
       if (!passwordMatch) {
         alert("密码错误！您将以只读模式登录。");
       }
     } else {
-      // 用户不存在，静默注册
-      console.log(`User "${username}" not found. Registering silently.`);
+      console.log(`[DEBUG] Profile not found for "${username}". Registering silently.`);
       const hashedPassword = await hash(password, 10);
-      const { error: insertError } = await supabaseClient.from("profiles").insert({ username, encrypted_password: hashedPassword });
+      console.log("[DEBUG] Password hashed. Inserting new profile.");
+      const { data: insertedData, error: insertError } = await supabaseClient
+        .from("profiles")
+        .insert({ username, encrypted_password: hashedPassword })
+        .select();
 
       if (insertError) {
+        console.error("[DEBUG] Error inserting new profile:", insertError);
         if (insertError.code === "23505") throw new Error(`注册失败，用户名 "${username}" 已被占用。`);
         throw insertError;
       }
+      console.log("[DEBUG] New profile inserted successfully:", insertedData);
       hasEditPermission = true;
     }
 
     isAdmin = username.toLowerCase() === "admin" && hasEditPermission;
+    console.log(`[DEBUG] Login final state: isAdmin=${isAdmin}, hasEditPermission=${hasEditPermission}`);
     sessionStorage.setItem("sessionData", JSON.stringify({ username, hasEditPermission }));
     showApp(username);
   } catch (error) {
+    console.error("[DEBUG] An error occurred in handleLogin:", error);
     alert(`登录处理失败: ${error.message}`);
     loginButton.disabled = false;
     loginButton.textContent = "进入";
@@ -104,16 +113,19 @@ async function handleLogin(username, password) {
 }
 
 function showApp(name) {
+  console.log(`[DEBUG] showApp called for user: '${name}', with edit permission: ${hasEditPermission}`);
   currentUser = name;
 
-  // 根据最终的权限状态，配置全局客户端
-  setupSupabaseClient(currentUser);
+  // 根据最终的权限状态，配置唯一的客户端实例的请求头
+  setAuthHeaders(currentUser);
 
   let statusText;
-  if (name === "访客" || !hasEditPermission) {
-    statusText = hasEditPermission ? "用户" : name === "访客" ? "访客" : "只读";
-  } else {
+  if (name === "访客") {
+    statusText = "访客";
+  } else if (hasEditPermission) {
     statusText = isAdmin ? "管理员" : "编辑者";
+  } else {
+    statusText = "只读";
   }
   usernameDisplay.textContent = `欢迎, ${currentUser} (${statusText})`;
   loginModal.classList.add("hidden");
@@ -122,12 +134,15 @@ function showApp(name) {
 }
 
 function logout() {
+  console.log("[DEBUG] Logging out.");
   sessionStorage.clear();
+  setAuthHeaders(null); // 清理请求头，恢复客户端为默认状态
   window.location.reload();
 }
 
 loginForm.addEventListener("submit", async e => {
   e.preventDefault();
+  console.log("[DEBUG] Login form submitted.");
   loginButton.disabled = true;
   loginButton.textContent = "进入中...";
 
@@ -140,6 +155,7 @@ logoutButton.addEventListener("click", logout);
 
 // --- 界面渲染 ---
 function renderTable() {
+  console.log("[DEBUG] renderTable called.");
   tableHead.innerHTML = `<tr><th>${tableHeaders.join("</th><th>")}</th></tr>`;
   tableBody.innerHTML = "";
 
@@ -187,8 +203,10 @@ function renderTable() {
 // --- 数据操作 (无二次验证) ---
 
 async function handleSubmit() {
+  console.log("[DEBUG] handleSubmit called.");
   if (!hasEditPermission) {
     alert("无修改权限！");
+    console.warn("[DEBUG] handleSubmit blocked due to no edit permission.");
     return;
   }
 
@@ -203,55 +221,75 @@ async function handleSubmit() {
   };
 
   const currentId = editingIdInput.value;
+  console.log(`[DEBUG] Preparing to submit data. Is updating: ${!!currentId}. Data:`, entryData);
+  console.log("[DEBUG] Current headers on supabaseClient:", supabaseClient.rest.headers);
 
   try {
-    let error;
-    // 直接使用全局的 supabaseClient，它已被 showApp() 正确配置
+    let response;
     if (currentId) {
-      ({ error } = await supabaseClient.from("scores").update({ data: entryData }).eq("id", currentId));
+      console.log("[DEBUG] Executing UPDATE on 'scores' table.");
+      response = await supabaseClient.from("scores").update({ data: entryData }).eq("id", currentId).select();
     } else {
-      ({ error } = await supabaseClient.from("scores").insert([{ creator_username: currentUser, data: entryData }]));
+      console.log("[DEBUG] Executing INSERT on 'scores' table.");
+      response = await supabaseClient
+        .from("scores")
+        .insert([{ creator_username: currentUser, data: entryData }])
+        .select();
     }
+
+    console.log("[DEBUG] Supabase response:", response);
+    const { error } = response;
     if (error) throw error;
 
     editingIdInput.value = "";
     scoreInput.value = "";
     videoInput.value = "";
     document.getElementById("submit-button").textContent = "上传";
+    console.log("[DEBUG] Submission successful. Reloading table data.");
     await loadTableData();
   } catch (error) {
+    console.error("[DEBUG] Error during submission:", error);
     alert(`操作失败: ${error.message}`);
   }
 }
 
 async function handleDelete(id) {
+  console.log(`[DEBUG] handleDelete called for id: ${id}.`);
   if (!hasEditPermission) {
     alert("无修改权限！");
+    console.warn("[DEBUG] handleDelete blocked due to no edit permission.");
     return;
   }
 
   if (confirm("确定要删除这条数据吗？")) {
+    console.log("[DEBUG] User confirmed deletion.");
     try {
-      // 直接使用全局的 supabaseClient
+      console.log("[DEBUG] Executing DELETE on 'scores' table.");
+      console.log("[DEBUG] Current headers on supabaseClient:", supabaseClient.rest.headers);
       const { error } = await supabaseClient.from("scores").delete().eq("id", id);
       if (error) throw error;
+      console.log("[DEBUG] Deletion successful. Reloading table data.");
       await loadTableData();
     } catch (error) {
+      console.error("[DEBUG] Error during deletion:", error);
       alert(`删除出错: ${error.message}`);
     }
+  } else {
+    console.log("[DEBUG] User canceled deletion.");
   }
 }
 
 async function loadTableData() {
+  console.log("[DEBUG] loadTableData called.");
   try {
-    // 加载数据总是用默认客户端，因为它不需要特殊头
-    const defaultClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-    const { data, error } = await defaultClient.from("scores").select("*");
+    // 读取数据是公开的，所以使用当前的客户端实例即可，RLS会允许
+    const { data, error } = await supabaseClient.from("scores").select("*");
     if (error) throw error;
     tableData = data;
+    console.log("[DEBUG] Table data loaded successfully:", tableData);
     renderTable();
   } catch (error) {
-    console.error("加载数据失败:", error);
+    console.error("[DEBUG] Error loading table data:", error);
     alert(`加载数据失败: ${error.message}`);
   }
 }
@@ -293,14 +331,18 @@ function escapeHTML(str) {
   return p.innerHTML;
 }
 
+console.log("[DEBUG] Script initialization started.");
 const savedSession = sessionStorage.getItem("sessionData");
+console.log("[DEBUG] Saved session data:", savedSession);
 if (savedSession) {
   const session = JSON.parse(savedSession);
   currentUser = session.username;
   hasEditPermission = session.hasEditPermission;
   isAdmin = hasEditPermission && currentUser.toLowerCase() === "admin";
+  console.log("[DEBUG] Session restored. User:", currentUser, "HasEditPermission:", hasEditPermission);
   // 在应用启动时，根据会话信息配置客户端
   showApp(currentUser);
 } else {
   loginModal.classList.remove("hidden");
+  console.log("[DEBUG] No session found. Showing login modal.");
 }
