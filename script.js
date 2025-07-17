@@ -1,4 +1,4 @@
-// script.js (v13 - The Definitive Debug & Fix Version)
+// script.js (v14 - The Final RPC Solution)
 
 // 模块导入
 import { hash, compare } from "https://esm.sh/bcrypt-ts@5.0.2";
@@ -16,11 +16,10 @@ const tableBody = document.getElementById("table-body");
 const usernameDisplay = document.getElementById("username-display");
 
 // --- Supabase 配置 ---
-const SUPABASE_URL = "https://uccwwlrxufwzljhxyiyu.supabase.co"; // 你的 URL
+const SUPABASE_URL = "https://uccwwlrxufwzljhxyiyu.supabase.co";
 const SUPABASE_ANON_KEY =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVjY3d3bHJ4dWZ3emxqaHh5aXl1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI3MTcxMzgsImV4cCI6MjA2ODI5MzEzOH0.aNFS1Q1kxLo_BEJzlDjLQy2uQrK1K9AOPqbMDlvrTBA"; // 你的 Anon Key
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVjY3d3bHJ4dWZ3emxqaHh5aXl1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI3MTcxMzgsImV4cCI6MjA2ODI5MzEzOH0.aNFS1Q1kxLo_BEJzlDjLQy2uQrK1K9AOPqbMDlvrTBA";
 
-// 【关键修复】只创建一次客户端，并用 const 保护它，防止被意外重新创建
 const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 console.log("[DEBUG] Initial Supabase client created.");
 
@@ -30,20 +29,6 @@ let hasEditPermission = false;
 let isAdmin = false;
 let tableData = [];
 const tableHeaders = ["选手", "成绩", "视频", "最近更改时间", "操作"];
-
-// 【关键修复】一个新的函数，用于修改现有客户端实例的默认请求头
-function setAuthHeaders(username) {
-  if (username && username !== "访客" && hasEditPermission) {
-    const encodedUsername = encodeURIComponent(username);
-    // 这是修改现有实例请求头的正确方法，直接操作 rest.headers
-    supabaseClient.rest.headers["x-username"] = encodedUsername;
-    console.log(`[DEBUG] Auth headers SET for user: '${username}' (encoded: '${encodedUsername}')`);
-  } else {
-    // 清除自定义请求头，恢复默认状态
-    delete supabaseClient.rest.headers["x-username"];
-    console.log(`[DEBUG] Auth headers CLEARED.`);
-  }
-}
 
 // --- 登录/注册处理 ---
 async function handleLogin(username, password) {
@@ -61,7 +46,6 @@ async function handleLogin(username, password) {
 
   try {
     console.log("[DEBUG] Querying profile for user:", username);
-    // 此查询使用全局客户端的当前状态（此时应为默认状态）
     const { data: profile, error: selectError } = await supabaseClient
       .from("profiles")
       .select("encrypted_password")
@@ -116,10 +100,7 @@ function showApp(name) {
   console.log(`[DEBUG] showApp called for user: '${name}', with edit permission: ${hasEditPermission}`);
   currentUser = name;
 
-  // 根据最终的权限状态，配置唯一的客户端实例的请求头
-  setAuthHeaders(currentUser);
-
-  let statusText;
+  let statusText = "未知";
   if (name === "访客") {
     statusText = "访客";
   } else if (hasEditPermission) {
@@ -136,7 +117,6 @@ function showApp(name) {
 function logout() {
   console.log("[DEBUG] Logging out.");
   sessionStorage.clear();
-  setAuthHeaders(null); // 清理请求头，恢复客户端为默认状态
   window.location.reload();
 }
 
@@ -200,13 +180,12 @@ function renderTable() {
   });
 }
 
-// --- 数据操作 (无二次验证) ---
+// --- 数据操作 (使用 RPC) ---
 
 async function handleSubmit() {
-  console.log("[DEBUG] handleSubmit called.");
+  console.log("[DEBUG] handleSubmit called (RPC version).");
   if (!hasEditPermission) {
     alert("无修改权限！");
-    console.warn("[DEBUG] handleSubmit blocked due to no edit permission.");
     return;
   }
 
@@ -221,23 +200,26 @@ async function handleSubmit() {
   };
 
   const currentId = editingIdInput.value;
-  console.log(`[DEBUG] Preparing to submit data. Is updating: ${!!currentId}. Data:`, entryData);
-  console.log("[DEBUG] Current headers on supabaseClient:", supabaseClient.rest.headers);
+  console.log(`[DEBUG] Preparing to submit via RPC. Is updating: ${!!currentId}.`);
 
   try {
     let response;
     if (currentId) {
-      console.log("[DEBUG] Executing UPDATE on 'scores' table.");
-      response = await supabaseClient.from("scores").update({ data: entryData }).eq("id", currentId).select();
+      console.log("[DEBUG] Calling RPC 'update_score'.");
+      response = await supabaseClient.rpc("update_score", {
+        record_id: Number(currentId),
+        updater_name: currentUser,
+        score_data: entryData,
+      });
     } else {
-      console.log("[DEBUG] Executing INSERT on 'scores' table.");
-      response = await supabaseClient
-        .from("scores")
-        .insert([{ creator_username: currentUser, data: entryData }])
-        .select();
+      console.log("[DEBUG] Calling RPC 'insert_score'.");
+      response = await supabaseClient.rpc("insert_score", {
+        creator_name: currentUser,
+        score_data: entryData,
+      });
     }
 
-    console.log("[DEBUG] Supabase response:", response);
+    console.log("[DEBUG] RPC response:", response);
     const { error } = response;
     if (error) throw error;
 
@@ -248,41 +230,39 @@ async function handleSubmit() {
     console.log("[DEBUG] Submission successful. Reloading table data.");
     await loadTableData();
   } catch (error) {
-    console.error("[DEBUG] Error during submission:", error);
+    console.error("[DEBUG] Error during RPC submission:", error);
     alert(`操作失败: ${error.message}`);
   }
 }
 
 async function handleDelete(id) {
-  console.log(`[DEBUG] handleDelete called for id: ${id}.`);
+  console.log(`[DEBUG] handleDelete called for id: ${id} (RPC version).`);
   if (!hasEditPermission) {
     alert("无修改权限！");
-    console.warn("[DEBUG] handleDelete blocked due to no edit permission.");
     return;
   }
 
   if (confirm("确定要删除这条数据吗？")) {
-    console.log("[DEBUG] User confirmed deletion.");
+    console.log("[DEBUG] User confirmed deletion. Calling RPC 'delete_score'.");
     try {
-      console.log("[DEBUG] Executing DELETE on 'scores' table.");
-      console.log("[DEBUG] Current headers on supabaseClient:", supabaseClient.rest.headers);
-      const { error } = await supabaseClient.from("scores").delete().eq("id", id);
+      const { error } = await supabaseClient.rpc("delete_score", {
+        record_id: Number(id),
+        deleter_name: currentUser,
+      });
+
       if (error) throw error;
       console.log("[DEBUG] Deletion successful. Reloading table data.");
       await loadTableData();
     } catch (error) {
-      console.error("[DEBUG] Error during deletion:", error);
+      console.error("[DEBUG] Error during RPC deletion:", error);
       alert(`删除出错: ${error.message}`);
     }
-  } else {
-    console.log("[DEBUG] User canceled deletion.");
   }
 }
 
 async function loadTableData() {
   console.log("[DEBUG] loadTableData called.");
   try {
-    // 读取数据是公开的，所以使用当前的客户端实例即可，RLS会允许
     const { data, error } = await supabaseClient.from("scores").select("*");
     if (error) throw error;
     tableData = data;
@@ -340,7 +320,6 @@ if (savedSession) {
   hasEditPermission = session.hasEditPermission;
   isAdmin = hasEditPermission && currentUser.toLowerCase() === "admin";
   console.log("[DEBUG] Session restored. User:", currentUser, "HasEditPermission:", hasEditPermission);
-  // 在应用启动时，根据会话信息配置客户端
   showApp(currentUser);
 } else {
   loginModal.classList.remove("hidden");
