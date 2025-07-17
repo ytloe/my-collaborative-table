@@ -1,4 +1,4 @@
-// script.js (v11 - Truly Silent & Streamlined Logic)
+// script.js (v12 - Single Client Instance Fix)
 
 // 模块导入
 import { hash, compare } from "https://esm.sh/bcrypt-ts@5.0.2";
@@ -19,7 +19,9 @@ const usernameDisplay = document.getElementById("username-display");
 const SUPABASE_URL = "https://uccwwlrxufwzljhxyiyu.supabase.co"; // 你的 URL
 const SUPABASE_ANON_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVjY3d3bHJ4dWZ3emxqaHh5aXl1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI3MTcxMzgsImV4cCI6MjA2ODI5MzEzOH0.aNFS1Q1kxLo_BEJzlDjLQy2uQrK1K9AOPqbMDlvrTBA"; // 你的 Anon Key
-const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// 【关键修复】只声明一次，但用 let 允许重新赋值
+let supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // --- 应用状态变量 ---
 let currentUser = null;
@@ -28,10 +30,28 @@ let isAdmin = false;
 let tableData = [];
 const tableHeaders = ["选手", "成绩", "视频", "最近更改时间", "操作"];
 
+// 【关键修复】一个函数，用于根据登录状态重新配置唯一的客户端实例
+function setupSupabaseClient(username) {
+  if (username && username !== "访客" && hasEditPermission) {
+    const encodedUsername = encodeURIComponent(username);
+    supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: {
+        headers: { "x-username": encodedUsername },
+      },
+    });
+    console.log(`Supabase client reconfigured for user: ${username}`);
+  } else {
+    // 访客或只读用户，使用无特殊请求头的默认客户端
+    supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    console.log("Supabase client set to default for visitor/read-only mode.");
+  }
+}
+
 // --- 登录/注册处理 ---
 async function handleLogin(username, password) {
   currentUser = username;
 
+  // 如果没有密码，则为访客
   if (!password) {
     hasEditPermission = false;
     isAdmin = false;
@@ -41,29 +61,24 @@ async function handleLogin(username, password) {
   }
 
   try {
-    // 【关键修复】明确地处理 SELECT 错误
-    const { data: profile, error: selectError } = await supabaseClient
+    // 使用默认客户端进行初始查询，因为它不需要特殊头
+    const { data: profile, error: selectError } = await window.supabase
+      .createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
       .from("profiles")
       .select("encrypted_password")
       .eq("username", username)
       .single();
 
-    // 如果发生错误，并且不是“未找到用户”的错误，则直接中断并报错
     if (selectError && selectError.code !== "PGRST116") {
-      console.error("Error fetching profile:", selectError);
       throw new Error(`查询用户信息时出错: ${selectError.message}`);
     }
-
-    const { compare, hash } = await import("https://esm.sh/bcrypt-ts@5.0.2");
 
     if (profile) {
       // 用户存在，验证密码
       const passwordMatch = await compare(password, profile.encrypted_password);
-      if (passwordMatch) {
-        hasEditPermission = true;
-      } else {
+      hasEditPermission = passwordMatch;
+      if (!passwordMatch) {
         alert("密码错误！您将以只读模式登录。");
-        hasEditPermission = false;
       }
     } else {
       // 用户不存在，静默注册
@@ -72,11 +87,8 @@ async function handleLogin(username, password) {
       const { error: insertError } = await supabaseClient.from("profiles").insert({ username, encrypted_password: hashedPassword });
 
       if (insertError) {
-        // 如果插入时发生“重复键”错误（可能是并发导致），给出明确提示
-        if (insertError.code === "23505") {
-          throw new Error(`注册失败，用户名 "${username}" 已被占用。`);
-        }
-        throw insertError; // 抛出其他插入错误
+        if (insertError.code === "23505") throw new Error(`注册失败，用户名 "${username}" 已被占用。`);
+        throw insertError;
       }
       hasEditPermission = true;
     }
@@ -93,6 +105,10 @@ async function handleLogin(username, password) {
 
 function showApp(name) {
   currentUser = name;
+
+  // 根据最终的权限状态，配置全局客户端
+  setupSupabaseClient(currentUser);
+
   let statusText;
   if (name === "访客" || !hasEditPermission) {
     statusText = hasEditPermission ? "用户" : name === "访客" ? "访客" : "只读";
@@ -127,11 +143,9 @@ function renderTable() {
   tableHead.innerHTML = `<tr><th>${tableHeaders.join("</th><th>")}</th></tr>`;
   tableBody.innerHTML = "";
 
-  // 逻辑4: 只有拥有编辑权限才展示增添行
   if (hasEditPermission) {
     const formRow = document.createElement("tr");
     formRow.id = "form-row";
-    // 逻辑4: 锁定选手名为当前登录用户
     formRow.innerHTML = `
             <td><span class="player-name">${escapeHTML(currentUser)}</span></td>
             <td><input type="text" id="score-input" placeholder="输入成绩"></td>
@@ -155,7 +169,6 @@ function renderTable() {
       .toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false })
       .replace(/\//g, "-");
 
-    // 逻辑4: 操作列权限控制
     const canModify = isAdmin || currentUser === rowData.creator_username;
     const actionButtons =
       canModify && hasEditPermission ? `<button class="action-btn edit">修改</button> <button class="action-btn delete">删除</button>` : "仅查看";
@@ -174,7 +187,6 @@ function renderTable() {
 // --- 数据操作 (无二次验证) ---
 
 async function handleSubmit() {
-  // 权限检查：只有拥有编辑权限的用户才能提交
   if (!hasEditPermission) {
     alert("无修改权限！");
     return;
@@ -191,18 +203,17 @@ async function handleSubmit() {
   };
 
   const currentId = editingIdInput.value;
-  const authedClient = createAuthedClient();
 
   try {
     let error;
+    // 直接使用全局的 supabaseClient，它已被 showApp() 正确配置
     if (currentId) {
-      ({ error } = await authedClient.from("scores").update({ data: entryData }).eq("id", currentId));
+      ({ error } = await supabaseClient.from("scores").update({ data: entryData }).eq("id", currentId));
     } else {
-      ({ error } = await authedClient.from("scores").insert([{ creator_username: currentUser, data: entryData }]));
+      ({ error } = await supabaseClient.from("scores").insert([{ creator_username: currentUser, data: entryData }]));
     }
     if (error) throw error;
 
-    // 清空输入框并刷新表格
     editingIdInput.value = "";
     scoreInput.value = "";
     videoInput.value = "";
@@ -219,11 +230,10 @@ async function handleDelete(id) {
     return;
   }
 
-  // 使用 confirm 是个好习惯，防止误删
   if (confirm("确定要删除这条数据吗？")) {
     try {
-      const authedClient = createAuthedClient();
-      const { error } = await authedClient.from("scores").delete().eq("id", id);
+      // 直接使用全局的 supabaseClient
+      const { error } = await supabaseClient.from("scores").delete().eq("id", id);
       if (error) throw error;
       await loadTableData();
     } catch (error) {
@@ -232,22 +242,11 @@ async function handleDelete(id) {
   }
 }
 
-function createAuthedClient() {
-  if (!currentUser || !hasEditPermission) return supabaseClient;
-
-  // 【关键修复】对包含非 ASCII 字符的用户名进行编码
-  const encodedUsername = encodeURIComponent(currentUser);
-
-  return window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    global: {
-      headers: { "x-username": encodedUsername },
-    },
-  });
-}
-
 async function loadTableData() {
   try {
-    const { data, error } = await supabaseClient.from("scores").select("*");
+    // 加载数据总是用默认客户端，因为它不需要特殊头
+    const defaultClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    const { data, error } = await defaultClient.from("scores").select("*");
     if (error) throw error;
     tableData = data;
     renderTable();
@@ -300,6 +299,7 @@ if (savedSession) {
   currentUser = session.username;
   hasEditPermission = session.hasEditPermission;
   isAdmin = hasEditPermission && currentUser.toLowerCase() === "admin";
+  // 在应用启动时，根据会话信息配置客户端
   showApp(currentUser);
 } else {
   loginModal.classList.remove("hidden");
