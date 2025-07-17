@@ -1,10 +1,9 @@
-// script.js (v15 - Admin Experience & Silent Login)
+// script.js (v16 - The Final "Trust, but Verify" Logic)
 
 // 模块导入
 import { hash, compare } from "https://esm.sh/bcrypt-ts@5.0.2";
 
 // --- DOM 元素获取 ---
-// ... (这部分不变) ...
 const loginModal = document.getElementById("login-modal");
 const loginForm = document.getElementById("login-form");
 const loginNameInput = document.getElementById("login-name");
@@ -24,63 +23,53 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_
 
 // --- 应用状态变量 ---
 let currentUser = null;
-let hasEditPermission = false;
+let currentPassword = null; // 在前端暂存密码
+let isVisitor = false;
 let isAdmin = false;
 let tableData = [];
 const tableHeaders = ["选手", "成绩", "视频", "最近更改时间", "操作"];
-let editingAsUser = null; // 【新增】用于 Admin 模式，暂存正在编辑的用户名
+let editingAsUser = null; // 用于 Admin 模式
 
-// --- 登录/注册处理 ---
+// --- 逻辑1, 2, 3: 登录/注册处理 (新版) ---
 async function handleLogin(username, password) {
+  // 逻辑2: 记录名称和密码
   currentUser = username;
+  currentPassword = password;
 
+  // 逻辑2: 若无密码则为访客
   if (!password) {
-    hasEditPermission = false;
-    isAdmin = false;
-    sessionStorage.setItem("sessionData", JSON.stringify({ username: "访客", hasEditPermission: false }));
-    showApp("访客");
+    currentUser = "访客";
+    isVisitor = true;
+    sessionStorage.setItem("sessionData", JSON.stringify({ username: "访客", password: "" }));
+    showApp();
     return;
   }
 
-  try {
-    const { data: profile } = await supabaseClient.from("profiles").select("encrypted_password").eq("username", username).single();
+  isVisitor = false;
+  isAdmin = username.toLowerCase() === "admin";
 
-    if (profile) {
-      const passwordMatch = await compare(password, profile.encrypted_password);
-      hasEditPermission = passwordMatch;
-      // 【需求1 实现】: 不再弹出密码错误的提示，实现静默登录
-      // if (!passwordMatch) {
-      //     alert("密码错误！您将以只读模式登录。");
-      // }
-    } else {
+  try {
+    const { data: profile } = await supabaseClient.from("profiles").select("username").eq("username", username).single();
+
+    // 逻辑3: 若数据库中不存在该名称，则记录
+    if (!profile) {
       const hashedPassword = await hash(password, 10);
       await supabaseClient.from("profiles").insert({ username, encrypted_password: hashedPassword });
-      hasEditPermission = true;
     }
+    // 若存在，则无需任何操作
 
-    isAdmin = username.toLowerCase() === "admin" && hasEditPermission;
-    sessionStorage.setItem("sessionData", JSON.stringify({ username, hasEditPermission }));
-    showApp(username);
+    sessionStorage.setItem("sessionData", JSON.stringify({ username, password }));
+    showApp();
   } catch (error) {
-    // 简化错误处理，因为之前的版本已经很健壮了
     alert(`登录处理失败: ${error.message}`);
     loginButton.disabled = false;
     loginButton.textContent = "进入";
   }
 }
 
-function showApp(name) {
-  currentUser = name;
+function showApp() {
   editingAsUser = null; // 重置编辑状态
-
-  let statusText = "未知";
-  if (name === "访客") {
-    statusText = "访客";
-  } else if (hasEditPermission) {
-    statusText = isAdmin ? "管理员" : "编辑者";
-  } else {
-    statusText = "只读";
-  }
+  let statusText = isVisitor ? "访客" : isAdmin ? "管理员" : "用户";
   usernameDisplay.textContent = `欢迎, ${currentUser} (${statusText})`;
   loginModal.classList.add("hidden");
   appContainer.classList.remove("hidden");
@@ -88,31 +77,23 @@ function showApp(name) {
 }
 
 function logout() {
-  sessionStorage.clear();
-  window.location.reload();
+  /* ... 不变 ... */
 }
-
 loginForm.addEventListener("submit", async e => {
-  e.preventDefault();
-  loginButton.disabled = true;
-  loginButton.textContent = "进入中...";
-  const u = loginNameInput.value.trim();
-  const p = loginPasswordInput.value.trim();
-  await handleLogin(u || "访客", p);
+  /* ... 不变 ... */
 });
-
 logoutButton.addEventListener("click", logout);
 
-// --- 界面渲染 ---
+// --- 逻辑4 & 6: 界面渲染 (新版) ---
 function renderTable() {
   tableHead.innerHTML = `<tr><th>${tableHeaders.join("</th><th>")}</th></tr>`;
   tableBody.innerHTML = "";
 
-  // 【需求2 实现】: Admin不显示添加行，只有普通编辑者才显示
-  if (hasEditPermission && !isAdmin) {
+  // 逻辑4: 根据名称给予增添行 (访客和 admin 不显示)
+  if (!isVisitor && !isAdmin) {
     const formRow = document.createElement("tr");
     formRow.id = "form-row";
-    const displayName = editingAsUser || currentUser; // 优先显示正在编辑的用户名
+    const displayName = editingAsUser || currentUser;
     formRow.innerHTML = `
             <td><span class="player-name" id="form-player-name">${escapeHTML(displayName)}</span></td>
             <td><input type="text" id="score-input" placeholder="输入成绩"></td>
@@ -131,16 +112,14 @@ function renderTable() {
   tableData.forEach(rowData => {
     const dataRow = document.createElement("tr");
     dataRow.dataset.id = rowData.id;
-    // 【新增】将创建者用户名也存入 dataset，方便读取
     dataRow.dataset.creator = rowData.creator_username;
 
-    const formattedTime = new Date(rowData.updated_at)
-      .toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false })
-      .replace(/\//g, "-");
+    const formattedTime = new Date(rowData.updated_at).toLocaleString(/*...*/).replace(/\//g, "-");
 
+    // 逻辑4 & 6: 根据用户名称给予按钮
     const canModify = isAdmin || currentUser === rowData.creator_username;
     const actionButtons =
-      canModify && hasEditPermission ? `<button class="action-btn edit">修改</button> <button class="action-btn delete">删除</button>` : "仅查看";
+      canModify && !isVisitor ? `<button class="action-btn edit">修改</button> <button class="action-btn delete">删除</button>` : "仅查看";
 
     dataRow.innerHTML = `
             <td>${escapeHTML(rowData.data["选手"] || "")}</td>
@@ -153,20 +132,47 @@ function renderTable() {
   });
 }
 
-// --- 数据操作 (使用 RPC) ---
+// --- 逻辑5 & 7: 带最终验证的数据操作 (新版) ---
+
+async function verifyPassword(usernameToVerify) {
+  if (isVisitor || !currentPassword) {
+    alert("访客无修改权限！");
+    return false;
+  }
+
+  try {
+    const { data: profile, error } = await supabaseClient.from("profiles").select("encrypted_password").eq("username", usernameToVerify).single();
+
+    if (error || !profile) {
+      alert(`错误：找不到用户 "${usernameToVerify}" 的验证信息。`);
+      return false;
+    }
+
+    const passwordMatch = await compare(currentPassword, profile.encrypted_password);
+    if (!passwordMatch) {
+      alert("用户密码错误，无修改权限！");
+      return false;
+    }
+    return true; // 验证通过
+  } catch (e) {
+    alert(`密码验证时发生错误: ${e.message}`);
+    return false;
+  }
+}
 
 async function handleSubmit() {
-  if (!hasEditPermission) {
-    alert("无修改权限！");
-    return;
-  }
+  const currentId = document.getElementById("editing-id-input").value;
+
+  // 确定谁是操作的发起者（用于验证密码）和谁是数据的真正所有者
+  const perpetrator = currentUser;
+  const actualPlayer = editingAsUser || currentUser;
+
+  // 逻辑5 & 7: 在操作时验证密码
+  const isAuthorized = await verifyPassword(perpetrator);
+  if (!isAuthorized) return;
 
   const scoreInput = document.getElementById("score-input");
   const videoInput = document.getElementById("video-input");
-  const editingIdInput = document.getElementById("editing-id-input");
-
-  // 【需求2 实现】: 确定数据的真正“选手”
-  const actualPlayer = editingAsUser || currentUser;
 
   const entryData = {
     "选手": actualPlayer,
@@ -174,34 +180,33 @@ async function handleSubmit() {
     "视频": videoInput.value.trim() || "无",
   };
 
-  const currentId = editingIdInput.value;
-
   try {
     let response;
     if (currentId) {
-      // 调用更新函数, updater_name 永远是当前登录者 (currentUser)，用于权限判断
       response = await supabaseClient.rpc("update_score", {
         record_id: Number(currentId),
-        updater_name: currentUser,
-        score_data: entryData,
+        updater_name: perpetrator, // 用登录者身份进行权限检查
+        score_data: entryData, // 写入实际选手的数据
       });
     } else {
-      // 调用插入函数
       response = await supabaseClient.rpc("insert_score", {
         creator_name: actualPlayer,
         score_data: entryData,
       });
     }
-
     const { error } = response;
     if (error) throw error;
 
-    // 操作成功后，重置编辑状态并刷新
+    // 操作成功后重置
     editingAsUser = null;
-    editingIdInput.value = "";
-    scoreInput.value = "";
-    videoInput.value = "";
-    document.getElementById("submit-button").textContent = "上传";
+    if (document.getElementById("editing-id-input")) {
+      document.getElementById("editing-id-input").value = "";
+      scoreInput.value = "";
+      videoInput.value = "";
+      document.getElementById("submit-button").textContent = "上传";
+      // 如果是 Admin 编辑，成功后移除表单行
+      if (isAdmin) document.getElementById("form-row")?.remove();
+    }
     await loadTableData();
   } catch (error) {
     alert(`操作失败: ${error.message}`);
@@ -209,19 +214,16 @@ async function handleSubmit() {
 }
 
 async function handleDelete(id) {
-  if (!hasEditPermission) {
-    alert("无修改权限！");
-    return;
-  }
+  // 逻辑5: 在操作时验证密码
+  const isAuthorized = await verifyPassword(currentUser);
+  if (!isAuthorized) return;
 
   if (confirm("确定要删除这条数据吗？")) {
     try {
-      // deleter_name 永远是当前登录者 (currentUser)，用于权限判断
       const { error } = await supabaseClient.rpc("delete_score", {
         record_id: Number(id),
         deleter_name: currentUser,
       });
-
       if (error) throw error;
       await loadTableData();
     } catch (error) {
@@ -231,17 +233,10 @@ async function handleDelete(id) {
 }
 
 async function loadTableData() {
-  try {
-    const { data, error } = await supabaseClient.from("scores").select("*");
-    if (error) throw error;
-    tableData = data;
-    renderTable();
-  } catch (error) {
-    alert(`加载数据失败: ${error.message}`);
-  }
+  /* ... 不变 ... */
 }
 
-// 表格事件委托
+// 表格事件委托 (新版)
 tableBody.addEventListener("click", e => {
   const target = e.target;
   if (target.id === "submit-button") {
@@ -253,36 +248,27 @@ tableBody.addEventListener("click", e => {
   if (!row || !row.dataset.id) return;
 
   if (target.classList.contains("edit")) {
-    if (!hasEditPermission) {
-      alert("无修改权限！");
-      return;
+    const formRowExists = !!document.getElementById("form-row");
+
+    // 逻辑7: Admin 点击更改时展示第一更改行
+    if (isAdmin && !formRowExists) {
+      const formRowHTML = `
+                <tr id="form-row">
+                    <td><span class="player-name" id="form-player-name"></span></td>
+                    <td><input type="text" id="score-input" placeholder="输入成绩"></td>
+                    <td><input type="text" id="video-input" placeholder="输入视频链接/BV号"></td>
+                    <td><span class="placeholder-text">自动</span></td>
+                    <td class="actions">
+                        <button id="submit-button">更新</button>
+                        <input type="hidden" id="editing-id-input">
+                    </td>
+                </tr>`;
+      tableBody.insertAdjacentHTML("afterbegin", formRowHTML);
     }
 
-    // 【需求2 实现】Admin 点击修改的特殊逻辑
-    if (isAdmin) {
-      // 如果 Admin 的添加行不存在，动态创建一个
-      if (!document.getElementById("form-row")) {
-        const formRowHTML = `
-                    <tr id="form-row">
-                        <td><span class="player-name" id="form-player-name"></span></td>
-                        <td><input type="text" id="score-input" placeholder="输入成绩"></td>
-                        <td><input type="text" id="video-input" placeholder="输入视频链接/BV号"></td>
-                        <td><span class="placeholder-text">自动</span></td>
-                        <td class="actions">
-                            <button id="submit-button">更新</button>
-                            <input type="hidden" id="editing-id-input">
-                        </td>
-                    </tr>`;
-        tableBody.insertAdjacentHTML("afterbegin", formRowHTML);
-      }
-
-      // 暂存正在编辑的用户名
-      editingAsUser = row.dataset.creator;
-      document.getElementById("form-player-name").textContent = escapeHTML(editingAsUser);
-    } else {
-      // 非 Admin 用户编辑自己时，清空暂存状态
-      editingAsUser = null;
-    }
+    // 逻辑7: 自动同步选手名称
+    editingAsUser = row.dataset.creator;
+    document.getElementById("form-player-name").textContent = escapeHTML(editingAsUser);
 
     const rowToEdit = tableData.find(d => d.id == row.dataset.id);
     if (rowToEdit) {
@@ -299,19 +285,48 @@ tableBody.addEventListener("click", e => {
 
 // --- 初始化 ---
 function escapeHTML(str) {
-  if (typeof str !== "string") return "";
-  const p = document.createElement("p");
-  p.textContent = str;
-  return p.innerHTML;
+  /* ... 不变 ... */
 }
-
 const savedSession = sessionStorage.getItem("sessionData");
 if (savedSession) {
   const session = JSON.parse(savedSession);
   currentUser = session.username;
-  hasEditPermission = session.hasEditPermission;
-  isAdmin = hasEditPermission && currentUser.toLowerCase() === "admin";
-  showApp(currentUser);
+  currentPassword = session.password;
+  isVisitor = !currentPassword;
+  isAdmin = !isVisitor && currentUser.toLowerCase() === "admin";
+  showApp();
 } else {
   loginModal.classList.remove("hidden");
+}
+
+// 补充完整的函数
+function logout() {
+  sessionStorage.clear();
+  window.location.reload();
+}
+loginForm.addEventListener("submit", async e => {
+  e.preventDefault();
+  loginButton.disabled = true;
+  loginButton.textContent = "进入中...";
+  const u = loginNameInput.value.trim();
+  const p = loginPasswordInput.value.trim();
+  await handleLogin(u || "访客", p);
+});
+logoutButton.addEventListener("click", logout);
+
+async function loadTableData() {
+  try {
+    const { data, error } = await supabaseClient.from("scores").select("*");
+    if (error) throw error;
+    tableData = data;
+    renderTable();
+  } catch (error) {
+    alert(`加载数据失败: ${error.message}`);
+  }
+}
+function escapeHTML(str) {
+  if (typeof str !== "string") return "";
+  const p = document.createElement("p");
+  p.textContent = str;
+  return p.innerHTML;
 }
