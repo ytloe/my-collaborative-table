@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>协同表格</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <!-- 登录遮罩层 -->
+    <div id="login-modal" class="modal-overlay">
+      <div class="modal-content">
+        <h2>访问令牌</h2>
+        <p>请输入您的名称和密码以访问表格。<br />密码将用于保护和修改您自己的数据。</p>
+        <form id="login-form">
+          <input type="text" id="login-name" placeholder="选手名" required />
+          <input type="password" id="login-password" placeholder="密码" required />
+          <button type="submit">进入</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- 主应用容器 -->
+    <div id="app-container" class="hidden">
+      <header>
+        <h1>选手成绩记录</h1>
+        <div id="user-info">
+          <button id="logout-button">登出</button>
+        </div>
+      </header>
+
+      <!-- 唯一的表格容器 -->
+      <div>由于延迟问题，若点击上传后表格不显示最新成绩，等待10秒后刷新网页即可</div>
+      <div class="table-container">
+        <table>
+          <thead id="table-head">
+            <!-- 表头将由 JavaScript 动态生成 -->
+          </thead>
+          <tbody id="table-body">
+            <!-- 输入行和数据行将由 JavaScript 动态生成 -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="script.js"></script>
+  </body>
+</html>
