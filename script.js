@@ -32,7 +32,6 @@ const tableHeaders = ["选手", "成绩", "视频", "最近更改时间", "操�
 async function handleLogin(username, password) {
   currentUser = username;
 
-  // 逻辑3: 未输入密码则为访客
   if (!password) {
     hasEditPermission = false;
     isAdmin = false;
@@ -42,9 +41,20 @@ async function handleLogin(username, password) {
   }
 
   try {
-    const { data: profile, error } = await supabaseClient.from("profiles").select("encrypted_password").eq("username", username).single();
+    // 【关键修复】明确地处理 SELECT 错误
+    const { data: profile, error: selectError } = await supabaseClient
+      .from("profiles")
+      .select("encrypted_password")
+      .eq("username", username)
+      .single();
 
-    if (error && error.code !== "PGRST116") throw error;
+    // 如果发生错误，并且不是“未找到用户”的错误，则直接中断并报错
+    if (selectError && selectError.code !== "PGRST116") {
+      console.error("Error fetching profile:", selectError);
+      throw new Error(`查询用户信息时出错: ${selectError.message}`);
+    }
+
+    const { compare, hash } = await import("https://esm.sh/bcrypt-ts@5.0.2");
 
     if (profile) {
       // 用户存在，验证密码
@@ -56,12 +66,19 @@ async function handleLogin(username, password) {
         hasEditPermission = false;
       }
     } else {
-      // 逻辑3: 用户不存在，静默注册
+      // 用户不存在，静默注册
       console.log(`User "${username}" not found. Registering silently.`);
       const hashedPassword = await hash(password, 10);
       const { error: insertError } = await supabaseClient.from("profiles").insert({ username, encrypted_password: hashedPassword });
-      if (insertError) throw insertError;
-      hasEditPermission = true; // 首次注册即获得编辑权限
+
+      if (insertError) {
+        // 如果插入时发生“重复键”错误（可能是并发导致），给出明确提示
+        if (insertError.code === "23505") {
+          throw new Error(`注册失败，用户名 "${username}" 已被占用。`);
+        }
+        throw insertError; // 抛出其他插入错误
+      }
+      hasEditPermission = true;
     }
 
     isAdmin = username.toLowerCase() === "admin" && hasEditPermission;
