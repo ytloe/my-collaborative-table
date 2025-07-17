@@ -234,8 +234,14 @@ async function handleDelete(id) {
 
 function createAuthedClient() {
   if (!currentUser || !hasEditPermission) return supabaseClient;
+
+  // 【关键修复】对包含非 ASCII 字符的用户名进行编码
+  const encodedUsername = encodeURIComponent(currentUser);
+
   return window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    global: { headers: { "x-username": currentUser } },
+    global: {
+      headers: { "x-username": encodedUsername },
+    },
   });
 }
 
