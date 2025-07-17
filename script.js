@@ -28,17 +28,19 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // 1. 登录处理函数
   async function handleLogin(username, password) {
-    // 目标 1.5: 不输入密码，作为访客
-    if (!password) {
+    // 目标 1.5: 不输入密码或用户名，作为访客
+    if (!username || !password) {
       currentUser = "访客";
       hasEditPermission = false;
       isAdmin = false;
       sessionStorage.setItem("sessionData", JSON.stringify({ username: currentUser, permission: "view" }));
       showApp();
-      return;
+      return; // <--- 提前返回，结束函数
     }
 
     try {
+      const { compare, hash } = await import("https://esm.sh/bcrypt-ts@5.0.2");
+
       // 查询用户是否存在
       const { data: profile, error: selectError } = await supabaseClient
         .from("profiles")
@@ -51,8 +53,6 @@ document.addEventListener("DOMContentLoaded", () => {
         throw selectError;
       }
 
-      const { compare, hash } = await import("https://esm.sh/bcrypt-ts@5.0.2");
-
       if (profile) {
         // 用户存在，验证密码
         const passwordMatch = await compare(password, profile.encrypted_password);
@@ -62,12 +62,33 @@ document.addEventListener("DOMContentLoaded", () => {
           alert("密码错误！你将以只读模式登录。");
           hasEditPermission = false;
         }
+        // 【关键修复】无论密码对错，登录流程到此结束，设置用户状态并显示App
+        currentUser = username;
+        isAdmin = username.toLowerCase() === "admin" && hasEditPermission;
+        sessionStorage.setItem(
+          "sessionData",
+          JSON.stringify({
+            username: currentUser,
+            permission: hasEditPermission ? "edit" : "view",
+          })
+        );
+        showApp();
+        return; // <--- 提前返回，不再往下执行创建用户的逻辑
       } else {
         // 用户不存在，创建新用户
         if (confirm(`用户 "${username}" 不存在。是否使用此密码创建新用户并登录？`)) {
           const hashedPassword = await hash(password, 10);
           const { error: insertError } = await supabaseClient.from("profiles").insert({ username: username, encrypted_password: hashedPassword });
-          if (insertError) throw insertError;
+
+          if (insertError) {
+            // 【关键修复】处理插入时可能发生的重复键错误（比如并发操作导致）
+            if (insertError.code === "23505") {
+              // 23505 is the code for unique_violation
+              alert(`创建用户失败：用户名 "${username}" 已经被注册。请尝试用该用户名登录。`);
+              return;
+            }
+            throw insertError;
+          }
           hasEditPermission = true;
         } else {
           // 用户选择不创建，作为访客登录
@@ -76,18 +97,18 @@ document.addEventListener("DOMContentLoaded", () => {
           isAdmin = false;
           sessionStorage.setItem("sessionData", JSON.stringify({ username: currentUser, permission: "view" }));
           showApp();
-          return;
+          return; // <--- 提前返回
         }
       }
 
-      // 设置当前用户状态
+      // 设置新创建用户的状态
       currentUser = username;
-      isAdmin = username.toLowerCase() === "admin" && hasEditPermission;
+      isAdmin = username.toLowerCase() === "admin" && hasEditPermission; // 应该不会是admin
       sessionStorage.setItem(
         "sessionData",
         JSON.stringify({
           username: currentUser,
-          permission: hasEditPermission ? "edit" : "view",
+          permission: "edit",
         })
       );
       showApp();
