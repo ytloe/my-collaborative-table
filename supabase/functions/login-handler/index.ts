@@ -1,4 +1,4 @@
-// supabase/functions/login-handler/index.ts (v5 - Final JWT Fix)
+// supabase/functions/login-handler/index.ts (v8 - Hardcoded Key as Last Resort)
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import * as djwt from "https://deno.land/x/djwt@v2.8/mod.ts";
@@ -9,17 +9,22 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// 【最终手段】将 JWT Secret 直接硬编码到代码中。
+// ！！！！！！ 在双引号中粘贴你自己的 JWT SECRET ！！！！！！
+const JWT_SECRET = "EV4VlSTJvu0Qy7ELskrNGvtc3yznOa/xnvKM9v9OL9z9XiDTOI3058PeTcLUBWCurXiXywZpmh7HDSBIKFxxgA==";
+
 serve(async req => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
   try {
-    // 【关键修复】在函数顶部获取并检查 JWT Secret
-    const JWT_SECRET = Deno.env.get("SUPABASE_JWT_SECRET");
-    if (!JWT_SECRET) {
-      throw new Error("FATAL: SUPABASE_JWT_SECRET is not available in the function's environment.");
+    // 检查硬编码的密钥是否存在，以防粘贴错误
+    if (!JWT_SECRET || JWT_SECRET === "EV4VlSTJvu0Qy7ELskrNGvtc3yznOa/xnvKM9v9OL9z9XiDTOI3058PeTcLUBWCurXiXywZpmh7HDSBIKFxxgA==") {
+      throw new Error("FATAL: JWT_SECRET is not hardcoded correctly in the function source code.");
     }
+
+    // ... 后续所有代码保持不变 ...
 
     const { username, password } = await req.json();
 
@@ -36,7 +41,6 @@ serve(async req => {
         iat: Math.floor(Date.now() / 1000),
         exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24,
       };
-      // 【关键修复】使用我们验证过的 JWT_SECRET 变量
       const guestToken = await djwt.create({ alg: "HS256", typ: "JWT" }, guestPayload, JWT_SECRET);
       return new Response(
         JSON.stringify({
@@ -84,7 +88,6 @@ serve(async req => {
       exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24,
     };
 
-    // 【关键修复】使用我们验证过的 JWT_SECRET 变量
     const token = await djwt.create({ alg: "HS256", typ: "JWT" }, jwtPayload, JWT_SECRET);
 
     return new Response(
