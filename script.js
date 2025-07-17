@@ -77,10 +77,17 @@ function showApp() {
 }
 
 function logout() {
-  /* ... 不变 ... */
+  sessionStorage.clear();
+  window.location.reload();
 }
+
 loginForm.addEventListener("submit", async e => {
-  /* ... 不变 ... */
+  e.preventDefault();
+  loginButton.disabled = true;
+  loginButton.textContent = "进入中...";
+  const u = loginNameInput.value.trim();
+  const p = loginPasswordInput.value.trim();
+  await handleLogin(u || "访客", p);
 });
 logoutButton.addEventListener("click", logout);
 
@@ -233,7 +240,14 @@ async function handleDelete(id) {
 }
 
 async function loadTableData() {
-  /* ... 不变 ... */
+  try {
+    const { data, error } = await supabaseClient.from("scores").select("*");
+    if (error) throw error;
+    tableData = data;
+    renderTable();
+  } catch (error) {
+    alert(`加载数据失败: ${error.message}`);
+  }
 }
 
 // 表格事件委托 (新版)
@@ -285,7 +299,10 @@ tableBody.addEventListener("click", e => {
 
 // --- 初始化 ---
 function escapeHTML(str) {
-  /* ... 不变 ... */
+  if (typeof str !== "string") return "";
+  const p = document.createElement("p");
+  p.textContent = str;
+  return p.innerHTML;
 }
 const savedSession = sessionStorage.getItem("sessionData");
 if (savedSession) {
