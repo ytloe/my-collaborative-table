@@ -1,295 +1,283 @@
-// script.js (v9 - Simplified Frontend-Only Logic)
-document.addEventListener("DOMContentLoaded", () => {
-  // --- DOM 元素获取 ---
-  const loginModal = document.getElementById("login-modal");
-  const loginForm = document.getElementById("login-form");
-  const loginNameInput = document.getElementById("login-name");
-  const loginPasswordInput = document.getElementById("login-password");
-  const appContainer = document.getElementById("app-container");
-  const logoutButton = document.getElementById("logout-button");
-  const tableHead = document.getElementById("table-head");
-  const tableBody = document.getElementById("table-body");
-  const usernameDisplay = document.getElementById("username-display");
+// script.js (v11 - Truly Silent & Streamlined Logic)
 
-  // --- Supabase 配置 ---
-  const SUPABASE_URL = "https://uccwwlrxufwzljhxyiyu.supabase.co"; // 你的 URL
-  const SUPABASE_ANON_KEY =
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVjY3d3bHJ4dWZ3emxqaHh5aXl1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI3MTcxMzgsImV4cCI6MjA2ODI5MzEzOH0.aNFS1Q1kxLo_BEJzlDjLQy2uQrK1K9AOPqbMDlvrTBA"; // 你的 Anon Key
-  const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+// 模块导入
+import { hash, compare } from "https://esm.sh/bcrypt-ts@5.0.2";
 
-  // --- 应用状态变量 ---
-  let currentUser = null;
-  let hasEditPermission = false;
-  let isAdmin = false;
-  let tableData = [];
-  const tableHeaders = ["选手", "成绩", "视频", "最近更改时间", "操作"];
+// --- DOM 元素获取 ---
+const loginModal = document.getElementById("login-modal");
+const loginForm = document.getElementById("login-form");
+const loginNameInput = document.getElementById("login-name");
+const loginPasswordInput = document.getElementById("login-password");
+const loginButton = document.getElementById("login-button");
+const appContainer = document.getElementById("app-container");
+const logoutButton = document.getElementById("logout-button");
+const tableHead = document.getElementById("table-head");
+const tableBody = document.getElementById("table-body");
+const usernameDisplay = document.getElementById("username-display");
 
-  // --- 登录与权限管理 ---
+// --- Supabase 配置 ---
+const SUPABASE_URL = "https://uccwwlrxufwzljhxyiyu.supabase.co"; // 你的 URL
+const SUPABASE_ANON_KEY =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVjY3d3bHJ4dWZ3emxqaHh5aXl1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI3MTcxMzgsImV4cCI6MjA2ODI5MzEzOH0.aNFS1Q1kxLo_BEJzlDjLQy2uQrK1K9AOPqbMDlvrTBA"; // 你的 Anon Key
+const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-  // 1. 登录处理函数
-  async function handleLogin(username, password) {
-    // 目标 1.5: 不输入密码或用户名，作为访客
-    if (!username || !password) {
-      currentUser = "访客";
-      hasEditPermission = false;
-      isAdmin = false;
-      sessionStorage.setItem("sessionData", JSON.stringify({ username: currentUser, permission: "view" }));
-      showApp();
-      return; // <--- 提前返回，结束函数
-    }
+// --- 应用状态变量 ---
+let currentUser = null;
+let hasEditPermission = false;
+let isAdmin = false;
+let tableData = [];
+const tableHeaders = ["选手", "成绩", "视频", "最近更改时间", "操作"];
 
-    try {
-      const { compare, hash } = await import("https://esm.sh/bcrypt-ts@5.0.2");
+// --- 登录/注册处理 ---
+async function handleLogin(username, password) {
+  currentUser = username;
 
-      // 查询用户是否存在
-      const { data: profile, error: selectError } = await supabaseClient
-        .from("profiles")
-        .select("encrypted_password")
-        .eq("username", username)
-        .single();
+  // 逻辑3: 未输入密码则为访客
+  if (!password) {
+    hasEditPermission = false;
+    isAdmin = false;
+    sessionStorage.setItem("sessionData", JSON.stringify({ username: "访客", hasEditPermission: false }));
+    showApp("访客");
+    return;
+  }
 
-      if (selectError && selectError.code !== "PGRST116") {
-        // PGRST116 = not found
-        throw selectError;
-      }
+  try {
+    const { data: profile, error } = await supabaseClient.from("profiles").select("encrypted_password").eq("username", username).single();
 
-      if (profile) {
-        // 用户存在，验证密码
-        const passwordMatch = await compare(password, profile.encrypted_password);
-        if (passwordMatch) {
-          hasEditPermission = true;
-        } else {
-          alert("密码错误！你将以只读模式登录。");
-          hasEditPermission = false;
-        }
-        // 【关键修复】无论密码对错，登录流程到此结束，设置用户状态并显示App
-        currentUser = username;
-        isAdmin = username.toLowerCase() === "admin" && hasEditPermission;
-        sessionStorage.setItem(
-          "sessionData",
-          JSON.stringify({
-            username: currentUser,
-            permission: hasEditPermission ? "edit" : "view",
-          })
-        );
-        showApp();
-        return; // <--- 提前返回，不再往下执行创建用户的逻辑
+    if (error && error.code !== "PGRST116") throw error;
+
+    if (profile) {
+      // 用户存在，验证密码
+      const passwordMatch = await compare(password, profile.encrypted_password);
+      if (passwordMatch) {
+        hasEditPermission = true;
       } else {
-        // 用户不存在，创建新用户
-        if (confirm(`用户 "${username}" 不存在。是否使用此密码创建新用户并登录？`)) {
-          const hashedPassword = await hash(password, 10);
-          const { error: insertError } = await supabaseClient.from("profiles").insert({ username: username, encrypted_password: hashedPassword });
-
-          if (insertError) {
-            // 【关键修复】处理插入时可能发生的重复键错误（比如并发操作导致）
-            if (insertError.code === "23505") {
-              // 23505 is the code for unique_violation
-              alert(`创建用户失败：用户名 "${username}" 已经被注册。请尝试用该用户名登录。`);
-              return;
-            }
-            throw insertError;
-          }
-          hasEditPermission = true;
-        } else {
-          // 用户选择不创建，作为访客登录
-          currentUser = "访客";
-          hasEditPermission = false;
-          isAdmin = false;
-          sessionStorage.setItem("sessionData", JSON.stringify({ username: currentUser, permission: "view" }));
-          showApp();
-          return; // <--- 提前返回
-        }
+        alert("密码错误！您将以只读模式登录。");
+        hasEditPermission = false;
       }
-
-      // 设置新创建用户的状态
-      currentUser = username;
-      isAdmin = username.toLowerCase() === "admin" && hasEditPermission; // 应该不会是admin
-      sessionStorage.setItem(
-        "sessionData",
-        JSON.stringify({
-          username: currentUser,
-          permission: "edit",
-        })
-      );
-      showApp();
-    } catch (error) {
-      alert(`登录处理失败: ${error.message}`);
-    }
-  }
-
-  // 2. 显示主应用
-  function showApp() {
-    let permissionText = "访客";
-    if (currentUser !== "访客") {
-      permissionText = hasEditPermission ? (isAdmin ? "管理员" : "编辑者") : "只读";
-    }
-    usernameDisplay.textContent = `欢迎, ${currentUser} (${permissionText})`;
-    loginModal.classList.add("hidden");
-    appContainer.classList.remove("hidden");
-    loadTableData();
-  }
-
-  // 3. 登出
-  function logout() {
-    sessionStorage.clear();
-    window.location.reload();
-  }
-
-  // 4. 登录表单事件
-  loginForm.addEventListener("submit", e => {
-    e.preventDefault();
-    const u = loginNameInput.value.trim();
-    const p = loginPasswordInput.value.trim();
-    if (u) {
-      handleLogin(u, p);
     } else {
-      // 允许不输入用户名，直接作为访客
-      handleLogin("访客", "");
+      // 逻辑3: 用户不存在，静默注册
+      console.log(`User "${username}" not found. Registering silently.`);
+      const hashedPassword = await hash(password, 10);
+      const { error: insertError } = await supabaseClient.from("profiles").insert({ username, encrypted_password: hashedPassword });
+      if (insertError) throw insertError;
+      hasEditPermission = true; // 首次注册即获得编辑权限
     }
+
+    isAdmin = username.toLowerCase() === "admin" && hasEditPermission;
+    sessionStorage.setItem("sessionData", JSON.stringify({ username, hasEditPermission }));
+    showApp(username);
+  } catch (error) {
+    alert(`登录处理失败: ${error.message}`);
+    loginButton.disabled = false;
+    loginButton.textContent = "进入";
+  }
+}
+
+function showApp(name) {
+  currentUser = name;
+  let statusText;
+  if (name === "访客" || !hasEditPermission) {
+    statusText = hasEditPermission ? "用户" : name === "访客" ? "访客" : "只读";
+  } else {
+    statusText = isAdmin ? "管理员" : "编辑者";
+  }
+  usernameDisplay.textContent = `欢迎, ${currentUser} (${statusText})`;
+  loginModal.classList.add("hidden");
+  appContainer.classList.remove("hidden");
+  loadTableData();
+}
+
+function logout() {
+  sessionStorage.clear();
+  window.location.reload();
+}
+
+loginForm.addEventListener("submit", async e => {
+  e.preventDefault();
+  loginButton.disabled = true;
+  loginButton.textContent = "进入中...";
+
+  const u = loginNameInput.value.trim();
+  const p = loginPasswordInput.value.trim();
+  await handleLogin(u || "访客", p);
+});
+
+logoutButton.addEventListener("click", logout);
+
+// --- 界面渲染 ---
+function renderTable() {
+  tableHead.innerHTML = `<tr><th>${tableHeaders.join("</th><th>")}</th></tr>`;
+  tableBody.innerHTML = "";
+
+  // 逻辑4: 只有拥有编辑权限才展示增添行
+  if (hasEditPermission) {
+    const formRow = document.createElement("tr");
+    formRow.id = "form-row";
+    // 逻辑4: 锁定选手名为当前登录用户
+    formRow.innerHTML = `
+            <td><span class="player-name">${escapeHTML(currentUser)}</span></td>
+            <td><input type="text" id="score-input" placeholder="输入成绩"></td>
+            <td><input type="text" id="video-input" placeholder="输入视频链接/BV号"></td>
+            <td><span class="placeholder-text">自动</span></td>
+            <td class="actions">
+                <button id="submit-button">上传</button>
+                <input type="hidden" id="editing-id-input">
+            </td>
+        `;
+    tableBody.appendChild(formRow);
+  }
+
+  tableData.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+
+  tableData.forEach(rowData => {
+    const dataRow = document.createElement("tr");
+    dataRow.dataset.id = rowData.id;
+
+    const formattedTime = new Date(rowData.updated_at)
+      .toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false })
+      .replace(/\//g, "-");
+
+    // 逻辑4: 操作列权限控制
+    const canModify = isAdmin || currentUser === rowData.creator_username;
+    const actionButtons =
+      canModify && hasEditPermission ? `<button class="action-btn edit">修改</button> <button class="action-btn delete">删除</button>` : "仅查看";
+
+    dataRow.innerHTML = `
+            <td>${escapeHTML(rowData.data["选手"] || "")}</td>
+            <td>${escapeHTML(rowData.data["成绩"] || "")}</td>
+            <td>${escapeHTML(rowData.data["视频"] || "")}</td>
+            <td>${escapeHTML(formattedTime)}</td>
+            <td class="actions">${actionButtons}</td>
+        `;
+    tableBody.appendChild(dataRow);
   });
+}
 
-  logoutButton.addEventListener("click", logout);
+// --- 数据操作 (无二次验证) ---
 
-  // --- 界面渲染 ---
-  function renderTable() {
-    // ... 这部分渲染逻辑与之前版本基本相同，无需大改 ...
-    tableHead.innerHTML = `<tr><th>${tableHeaders.join("</th><th>")}</th></tr>`;
-    tableBody.innerHTML = "";
+async function handleSubmit() {
+  // 权限检查：只有拥有编辑权限的用户才能提交
+  if (!hasEditPermission) {
+    alert("无修改权限！");
+    return;
+  }
 
-    if (hasEditPermission) {
-      const formRow = document.createElement("tr");
-      formRow.id = "form-row";
-      formRow.innerHTML = `
-          <td><span class="player-name">${escapeHTML(currentUser)}</span></td>
-          <td><input type="text" id="score-input" placeholder="输入成绩"></td>
-          <td><input type="text" id="video-input" placeholder="输入视频链接/BV号"></td>
-          <td><span class="placeholder-text">自动</span></td>
-          <td class="actions">
-              <button id="submit-button">上传</button>
-              <input type="hidden" id="editing-id-input">
-          </td>
-      `;
-      tableBody.appendChild(formRow);
+  const scoreInput = document.getElementById("score-input");
+  const videoInput = document.getElementById("video-input");
+  const editingIdInput = document.getElementById("editing-id-input");
+
+  const entryData = {
+    "选手": currentUser,
+    "成绩": scoreInput.value.trim() || "无",
+    "视频": videoInput.value.trim() || "无",
+  };
+
+  const currentId = editingIdInput.value;
+  const authedClient = createAuthedClient();
+
+  try {
+    let error;
+    if (currentId) {
+      ({ error } = await authedClient.from("scores").update({ data: entryData }).eq("id", currentId));
+    } else {
+      ({ error } = await authedClient.from("scores").insert([{ creator_username: currentUser, data: entryData }]));
     }
+    if (error) throw error;
 
-    tableData.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+    // 清空输入框并刷新表格
+    editingIdInput.value = "";
+    scoreInput.value = "";
+    videoInput.value = "";
+    document.getElementById("submit-button").textContent = "上传";
+    await loadTableData();
+  } catch (error) {
+    alert(`操作失败: ${error.message}`);
+  }
+}
 
-    tableData.forEach(rowData => {
-      const dataRow = document.createElement("tr");
-      dataRow.dataset.id = rowData.id;
-      dataRow.dataset.creator = rowData.creator_username;
-
-      const formattedTime = new Date(rowData.updated_at)
-        .toLocaleString("zh-CN", {
-          /* ... */
-        })
-        .replace(/\//g, "-");
-
-      const canModify = isAdmin || (hasEditPermission && rowData.creator_username === currentUser);
-      const actionButtons = canModify ? `<button class="action-btn edit">修改</button> <button class="action-btn delete">删除</button>` : "仅查看";
-
-      dataRow.innerHTML = `
-        <td>${escapeHTML(rowData.data["选手"] || "")}</td>
-        <td>${escapeHTML(rowData.data["成绩"] || "")}</td>
-        <td>${escapeHTML(rowData.data["视频"] || "")}</td>
-        <td>${escapeHTML(formattedTime)}</td>
-        <td class="actions">${actionButtons}</td>
-      `;
-      tableBody.appendChild(dataRow);
-    });
+async function handleDelete(id) {
+  if (!hasEditPermission) {
+    alert("无修改权限！");
+    return;
   }
 
-  // --- 数据操作 ---
-  // 创建一个带有认证请求头的 Supabase 客户端实例
-  function createAuthedClient() {
-    if (!currentUser || currentUser === "访客") return supabaseClient; // 访客用默认客户端
-    return window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      global: {
-        headers: { "x-username": currentUser },
-      },
-    });
-  }
-
-  async function handleSubmit() {
-    if (!hasEditPermission) return;
-
-    const scoreInput = document.getElementById("score-input");
-    const videoInput = document.getElementById("video-input");
-    const editingIdInput = document.getElementById("editing-id-input");
-
-    const entryData = {
-      "选手": currentUser,
-      "成绩": scoreInput.value.trim() || "无",
-      "视频": videoInput.value.trim() || "无",
-    };
-
-    const currentId = editingIdInput.value;
-    const authedClient = createAuthedClient();
-
+  // 使用 confirm 是个好习惯，防止误删
+  if (confirm("确定要删除这条数据吗？")) {
     try {
-      let error;
-      if (currentId) {
-        ({ error } = await authedClient.from("scores").update({ data: entryData }).eq("id", currentId));
-      } else {
-        ({ error } = await authedClient.from("scores").insert([{ creator_username: currentUser, data: entryData }]));
-      }
+      const authedClient = createAuthedClient();
+      const { error } = await authedClient.from("scores").delete().eq("id", id);
       if (error) throw error;
-
-      editingIdInput.value = "";
-      scoreInput.value = "";
-      videoInput.value = "";
-      document.getElementById("submit-button").textContent = "上传";
       await loadTableData();
     } catch (error) {
-      alert(`操作失败: ${error.message}. 请检查权限或网络连接。`);
+      alert(`删除出错: ${error.message}`);
     }
   }
+}
 
-  async function handleDelete(id) {
-    if (confirm("确定要删除这条数据吗？")) {
-      try {
-        const authedClient = createAuthedClient();
-        const { error } = await authedClient.from("scores").delete().eq("id", id);
-        if (error) throw error;
-        await loadTableData();
-      } catch (error) {
-        alert(`删除出错: ${error.message}`);
-      }
-    }
-  }
-
-  async function loadTableData() {
-    try {
-      // 加载数据不需要特殊权限，用默认客户端即可
-      const { data, error } = await supabaseClient.from("scores").select("*");
-      if (error) throw error;
-      tableData = data;
-      renderTable();
-    } catch (error) {
-      alert(`加载数据失败: ${error.message}`);
-    }
-  }
-
-  tableBody.addEventListener("click", e => {
-    // ... 这部分事件委托逻辑与之前版本基本相同 ...
+function createAuthedClient() {
+  if (!currentUser || !hasEditPermission) return supabaseClient;
+  return window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    global: { headers: { "x-username": currentUser } },
   });
+}
 
-  // --- 初始化 ---
-  function escapeHTML(str) {
-    if (typeof str !== "string") return "";
-    const p = document.createElement("p");
-    p.textContent = str;
-    return p.innerHTML;
+async function loadTableData() {
+  try {
+    const { data, error } = await supabaseClient.from("scores").select("*");
+    if (error) throw error;
+    tableData = data;
+    renderTable();
+  } catch (error) {
+    console.error("加载数据失败:", error);
+    alert(`加载数据失败: ${error.message}`);
+  }
+}
+
+// 表格事件委托
+tableBody.addEventListener("click", e => {
+  const target = e.target;
+  if (target.id === "submit-button") {
+    handleSubmit();
+    return;
   }
 
-  const savedSession = sessionStorage.getItem("sessionData");
-  if (savedSession) {
-    const { username, permission } = JSON.parse(savedSession);
-    currentUser = username;
-    hasEditPermission = permission === "edit";
-    isAdmin = username.toLowerCase() === "admin" && hasEditPermission;
-    showApp();
-  } else {
-    loginModal.classList.remove("hidden");
+  const row = target.closest("tr");
+  if (!row || !row.dataset.id) return;
+
+  if (target.classList.contains("edit")) {
+    if (!hasEditPermission) {
+      alert("无修改权限！");
+      return;
+    }
+    const rowToEdit = tableData.find(d => d.id == row.dataset.id);
+    if (rowToEdit) {
+      document.getElementById("score-input").value = rowToEdit.data["成绩"] || "";
+      document.getElementById("video-input").value = rowToEdit.data["视频"] || "";
+      document.getElementById("editing-id-input").value = rowToEdit.id;
+      document.getElementById("submit-button").textContent = "更新";
+      window.scrollTo(0, 0);
+    }
+  } else if (target.classList.contains("delete")) {
+    handleDelete(row.dataset.id);
   }
 });
+
+// --- 初始化 ---
+function escapeHTML(str) {
+  if (typeof str !== "string") return "";
+  const p = document.createElement("p");
+  p.textContent = str;
+  return p.innerHTML;
+}
+
+const savedSession = sessionStorage.getItem("sessionData");
+if (savedSession) {
+  const session = JSON.parse(savedSession);
+  currentUser = session.username;
+  hasEditPermission = session.hasEditPermission;
+  isAdmin = hasEditPermission && currentUser.toLowerCase() === "admin";
+  showApp(currentUser);
+} else {
+  loginModal.classList.remove("hidden");
+}

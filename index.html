@@ -10,12 +10,12 @@
     <!-- 登录遮罩层 -->
     <div id="login-modal" class="modal-overlay">
       <div class="modal-content">
-        <h2>访问令牌</h2>
-        <p>请输入您的名称和密码以访问表格。<br />密码将用于保护和修改您自己的数据。</p>
+        <h2>访问表格</h2>
+        <p>请输入用户名和密码。<br />首次使用将自动注册，密码将作为您的编辑凭证。<br />密码错误或不填将以“只读”或“访客”模式登录。</p>
         <form id="login-form">
-          <input type="text" id="login-name" placeholder="选手名" required />
-          <input type="password" id="login-password" placeholder="密码" required />
-          <button type="submit">进入</button>
+          <input type="text" id="login-name" placeholder="用户名" required />
+          <input type="password" id="login-password" placeholder="密码 (不填则为访客)" />
+          <button type="submit" id="login-button">进入</button>
         </form>
       </div>
     </div>
@@ -25,12 +25,12 @@
       <header>
         <h1>选手成绩记录</h1>
         <div id="user-info">
+          <span id="username-display"></span>
           <button id="logout-button">登出</button>
         </div>
       </header>
 
-      <!-- 唯一的表格容器 -->
-      <div>由于延迟问题，若点击上传后表格不显示最新成绩，等待10秒后刷新网页即可</div>
+      <div>若点击上传后表格不显示最新成绩，请稍等片刻或刷新页面。</div>
       <div class="table-container">
         <table>
           <thead id="table-head">
@@ -42,7 +42,9 @@
         </table>
       </div>
     </div>
+
+    <!-- 引入 Supabase 和 script -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="script.js"></script>
+    <script type="module" src="script.js"></script>
   </body>
 </html>

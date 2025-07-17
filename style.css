@@ -37,7 +37,7 @@ body {
   color: #2c3e50;
 }
 
-/* ★★★ 新增：统一登录表单的样式 ★★★ */
+/* 统一登录表单的样式 */
 #login-form input,
 #login-form button {
   width: 100%;
@@ -45,12 +45,12 @@ body {
   margin-bottom: 15px;
   border: 1px solid #ccc;
   border-radius: 4px;
-  box-sizing: border-box; /* 关键属性，确保padding不会影响总宽度 */
+  box-sizing: border-box;
   font-size: 1em;
-  height: 48px; /* 固定高度 */
+  height: 48px;
 }
 #login-form input {
-  margin: 0 0 15px 0; /* 移除默认的上下边距 */
+  margin: 0 0 15px 0;
 }
 #login-form button {
   margin-top: 5px;
@@ -78,6 +78,9 @@ header h1 {
   color: #2c3e50;
 }
 #user-info {
+  display: flex;
+  align-items: center;
+  gap: 15px;
   font-size: 1.1em;
 }
 
