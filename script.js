@@ -68,7 +68,7 @@ async function handleLogin(username, password) {
 }
 
 function showApp() {
-  editingAsUser = null; // 重置编辑状态
+  editingAsUser = null; // 每次显示应用时重置编辑状态
   let statusText = isVisitor ? "访客" : isAdmin ? "管理员" : "用户";
   usernameDisplay.textContent = `欢迎, ${currentUser} (${statusText})`;
   loginModal.classList.add("hidden");
@@ -89,6 +89,7 @@ loginForm.addEventListener("submit", async e => {
   const p = loginPasswordInput.value.trim();
   await handleLogin(u || "访客", p);
 });
+
 logoutButton.addEventListener("click", logout);
 
 // --- 逻辑4 & 6: 界面渲染 (新版) ---
@@ -96,7 +97,7 @@ function renderTable() {
   tableHead.innerHTML = `<tr><th>${tableHeaders.join("</th><th>")}</th></tr>`;
   tableBody.innerHTML = "";
 
-  // 逻辑4: 根据名称给予增添行 (访客和 admin 不显示)
+  // 逻辑4 & 6: 根据名称给予增添行 (访客和 admin 不显示)
   if (!isVisitor && !isAdmin) {
     const formRow = document.createElement("tr");
     formRow.id = "form-row";
@@ -121,7 +122,9 @@ function renderTable() {
     dataRow.dataset.id = rowData.id;
     dataRow.dataset.creator = rowData.creator_username;
 
-    const formattedTime = new Date(rowData.updated_at).toLocaleString(/*...*/).replace(/\//g, "-");
+    const formattedTime = new Date(rowData.updated_at)
+      .toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false })
+      .replace(/\//g, "-");
 
     // 逻辑4 & 6: 根据用户名称给予按钮
     const canModify = isAdmin || currentUser === rowData.creator_username;
@@ -141,6 +144,7 @@ function renderTable() {
 
 // --- 逻辑5 & 7: 带最终验证的数据操作 (新版) ---
 
+// 核心验证函数
 async function verifyPassword(usernameToVerify) {
   if (isVisitor || !currentPassword) {
     alert("访客无修改权限！");
@@ -168,18 +172,23 @@ async function verifyPassword(usernameToVerify) {
 }
 
 async function handleSubmit() {
-  const currentId = document.getElementById("editing-id-input").value;
+  const scoreInput = document.getElementById("score-input");
+  const videoInput = document.getElementById("video-input");
+  const editingIdInput = document.getElementById("editing-id-input");
 
-  // 确定谁是操作的发起者（用于验证密码）和谁是数据的真正所有者
-  const perpetrator = currentUser;
-  const actualPlayer = editingAsUser || currentUser;
+  if (!scoreInput || !videoInput || !editingIdInput) {
+    console.error("Form elements not found. This might happen if Admin tries to submit without an active edit form.");
+    return;
+  }
+
+  const currentId = editingIdInput.value;
+
+  const perpetrator = currentUser; // 操作的发起者，用于验证密码
+  const actualPlayer = editingAsUser || currentUser; // 数据的真正所有者
 
   // 逻辑5 & 7: 在操作时验证密码
   const isAuthorized = await verifyPassword(perpetrator);
   if (!isAuthorized) return;
-
-  const scoreInput = document.getElementById("score-input");
-  const videoInput = document.getElementById("video-input");
 
   const entryData = {
     "选手": actualPlayer,
@@ -206,14 +215,13 @@ async function handleSubmit() {
 
     // 操作成功后重置
     editingAsUser = null;
-    if (document.getElementById("editing-id-input")) {
-      document.getElementById("editing-id-input").value = "";
-      scoreInput.value = "";
-      videoInput.value = "";
-      document.getElementById("submit-button").textContent = "上传";
-      // 如果是 Admin 编辑，成功后移除表单行
-      if (isAdmin) document.getElementById("form-row")?.remove();
-    }
+    editingIdInput.value = "";
+    scoreInput.value = "";
+    videoInput.value = "";
+    document.getElementById("submit-button").textContent = "上传";
+    // 如果是 Admin 编辑，成功后移除表单行
+    if (isAdmin) document.getElementById("form-row")?.remove();
+
     await loadTableData();
   } catch (error) {
     alert(`操作失败: ${error.message}`);
@@ -253,7 +261,9 @@ async function loadTableData() {
 // 表格事件委托 (新版)
 tableBody.addEventListener("click", e => {
   const target = e.target;
-  if (target.id === "submit-button") {
+  // 检查提交按钮是否存在，如果不存在（admin模式），则handleSubmit不应该被这个事件触发
+  const submitButton = document.getElementById("submit-button");
+  if (submitButton && target.id === "submit-button") {
     handleSubmit();
     return;
   }
@@ -262,10 +272,8 @@ tableBody.addEventListener("click", e => {
   if (!row || !row.dataset.id) return;
 
   if (target.classList.contains("edit")) {
-    const formRowExists = !!document.getElementById("form-row");
-
-    // 逻辑7: Admin 点击更改时展示第一更改行
-    if (isAdmin && !formRowExists) {
+    // 逻辑7: Admin 点击更改时，即使表单行不存在，也要动态创建它
+    if (isAdmin && !document.getElementById("form-row")) {
       const formRowHTML = `
                 <tr id="form-row">
                     <td><span class="player-name" id="form-player-name"></span></td>
@@ -304,46 +312,15 @@ function escapeHTML(str) {
   p.textContent = str;
   return p.innerHTML;
 }
+
 const savedSession = sessionStorage.getItem("sessionData");
 if (savedSession) {
   const session = JSON.parse(savedSession);
   currentUser = session.username;
   currentPassword = session.password;
-  isVisitor = !currentPassword;
+  isVisitor = !currentPassword; // 根据密码是否存在来判断访客
   isAdmin = !isVisitor && currentUser.toLowerCase() === "admin";
   showApp();
 } else {
   loginModal.classList.remove("hidden");
-}
-
-// 补充完整的函数
-function logout() {
-  sessionStorage.clear();
-  window.location.reload();
-}
-loginForm.addEventListener("submit", async e => {
-  e.preventDefault();
-  loginButton.disabled = true;
-  loginButton.textContent = "进入中...";
-  const u = loginNameInput.value.trim();
-  const p = loginPasswordInput.value.trim();
-  await handleLogin(u || "访客", p);
-});
-logoutButton.addEventListener("click", logout);
-
-async function loadTableData() {
-  try {
-    const { data, error } = await supabaseClient.from("scores").select("*");
-    if (error) throw error;
-    tableData = data;
-    renderTable();
-  } catch (error) {
-    alert(`加载数据失败: ${error.message}`);
-  }
-}
-function escapeHTML(str) {
-  if (typeof str !== "string") return "";
-  const p = document.createElement("p");
-  p.textContent = str;
-  return p.innerHTML;
 }
